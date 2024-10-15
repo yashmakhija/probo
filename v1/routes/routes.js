@@ -9,6 +9,7 @@ const {
   showInrBalance,
   showOrderbook,
   userInrBalance,
+  userStockBalance,
 } = require("../controller/userController");
 const routesRouter = express.Router();
 
