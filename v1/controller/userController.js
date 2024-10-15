@@ -200,6 +200,28 @@ function placeSellOrder(req, res) {
     });
     return;
   }
+
+  if (!ORDERBOOK[stockSymbol]) {
+    return res
+      .status(404)
+      .json({ message: `Stock symbol ${stockSymbol} not found.` });
+  }
+  if (!ORDERBOOK[stockSymbol][stockType][price]) {
+    ORDERBOOK[stockSymbol][stockType][price] = { total: 0, orders: {} };
+  }
+
+  ORDERBOOK[stockSymbol][stockType][price].total += quantity;
+  if (!ORDERBOOK[stockSymbol][stockType][price].orders[userId]) {
+    ORDERBOOK[stockSymbol][stockType][price].orders[userId] = 0;
+  }
+  ORDERBOOK[stockSymbol][stockType][price].orders[userId] += quantity;
+
+  res
+    .status(200)
+    .json({
+      message: `Sell order placed for ${quantity} at price ${price}`,
+      orderbook: ORDERBOOK[stockSymbol],
+    });
 }
 
 module.exports = {
