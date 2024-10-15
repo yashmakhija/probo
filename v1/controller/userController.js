@@ -109,8 +109,8 @@ function showAllUser(req, res) {
     users,
   });
 }
-function showOrderbook(req, res) {
-  const { stockSymbol } = req.query;
+function showOrderbookBySymbol(req, res) {
+  const { stockSymbol } = req.params;
 
   if (!stockSymbol) {
     res.status(400).json({
@@ -161,6 +161,47 @@ function userStockBalance(req, res) {
   });
 }
 
+function placeBuyOrder(req, res) {
+  const { userId, stockSymbol, quantity, price, stockType } = req.body;
+
+  if (stockType !== "yes" && stockType !== "no") {
+    res.status(400).json({
+      msg: "Invalid stock type. Must be 'yes' or 'no'",
+    });
+    return;
+  }
+  if (!ORDERBOOK[stockSymbol]) {
+    res.status(404).json({
+      msg: `Stock symbol ${stockSymbol} not found.`,
+    });
+    return;
+  }
+  if (!ORDERBOOK[stockSymbol][stockType][price]) {
+    ORDERBOOK[stockSymbol][stockType][price] = { total: 0, orders: {} };
+  }
+  ORDERBOOK[stockSymbol][stockType][price].total += quantity;
+  if (!ORDERBOOK[stockSymbol][stockType][price].orders[userId]) {
+    ORDERBOOK[stockSymbol][stockType][price].orders[userId] = 0;
+  }
+  ORDERBOOK[stockSymbol][stockType][price].orders[userId] += quantity;
+
+  res.status(200).json({
+    message: `Buy order placed for ${quantity} at price ${price}`,
+    orderbook: ORDERBOOK[stockSymbol],
+  });
+}
+
+function placeSellOrder(req, res) {
+  const { userId, stockSymbol, quantity, price, stockType } = req.body;
+
+  if (stockType !== "yes" && stockType !== "no") {
+    res.status(400).json({
+      msg: "Invalid stock type. Must be 'yes' or 'no'",
+    });
+    return;
+  }
+}
+
 module.exports = {
   resetData,
   createUser,
@@ -169,7 +210,9 @@ module.exports = {
   showAllUser,
   showStockBalance,
   showInrBalance,
-  showOrderbook,
+  showOrderbookBySymbol,
   userInrBalance,
   userStockBalance,
+  placeBuyOrder,
+  placeSellOrder,
 };
