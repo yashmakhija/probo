@@ -22,7 +22,7 @@ routesRouter.post("/symbol/create/:stockSymbol", createSymbol);
 routesRouter.get("/balances/stock", showStockBalance);
 routesRouter.get("/balances/inr", showInrBalance);
 routesRouter.post("/users", showAllUser);
-routesRouter.get("/orderbook", showOrderbookBySymbol);
+routesRouter.get("/orderbook/:stockSymbol", showOrderbookBySymbol);
 routesRouter.get("/balance/inr/:userId", userInrBalance);
 routesRouter.get("/balance/stock/:userId", userStockBalance);
 routesRouter.post("/order/buy", placeBuyOrder);
