@@ -9,4 +9,4 @@ app.use("/", v1);
 const PORT = 3000;
 app.listen(PORT, () => {});
 
-module.exports = { app };
+module.exports = app ;
