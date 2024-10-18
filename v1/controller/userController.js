@@ -66,11 +66,10 @@ function createSymbol(req, res) {
   }
 
   res.status(201).json({
-    msg: `Symbol ${stockSymbol} created`,
+    message: `Symbol ${stockSymbol} created`, // <- Ensure this is returned
     stockBalances: STOCK_BALANCES[user][stockSymbol],
     orderbook: ORDERBOOK[stockSymbol],
   });
-  return;
 }
 
 function showStockBalance(req, res) {
@@ -170,6 +169,17 @@ function placeBuyOrder(req, res) {
     });
     return;
   }
+  const totalCost = quantity * price;
+
+  if (!INR_BALANCES[userId] || INR_BALANCES[userId].balance < totalCost) {
+    return res.status(400).json({
+      message: "Insufficient INR balance.",
+    });
+  }
+
+  INR_BALANCES[userId].balance -= totalCost;
+  INR_BALANCES[userId].locked += totalCost;
+
   if (!ORDERBOOK[stockSymbol]) {
     res.status(404).json({
       msg: `Stock symbol ${stockSymbol} not found.`,
@@ -201,6 +211,19 @@ function placeSellOrder(req, res) {
     return;
   }
 
+  if (
+    !STOCK_BALANCES[userId] ||
+    !STOCK_BALANCES[userId][stockSymbol] ||
+    STOCK_BALANCES[userId][stockSymbol][stockType].quantity < quantity
+  ) {
+    return res.status(400).json({
+      message: "Insufficient stock to sell.",
+    });
+  }
+
+  STOCK_BALANCES[userId][stockSymbol][stockType].quantity -= quantity;
+  STOCK_BALANCES[userId][stockSymbol][stockType].locked += quantity;
+
   if (!ORDERBOOK[stockSymbol]) {
     return res
       .status(404)
@@ -216,12 +239,10 @@ function placeSellOrder(req, res) {
   }
   ORDERBOOK[stockSymbol][stockType][price].orders[userId] += quantity;
 
-  res
-    .status(200)
-    .json({
-      message: `Sell order placed for ${quantity} at price ${price}`,
-      orderbook: ORDERBOOK[stockSymbol],
-    });
+  res.status(200).json({
+    message: `Sell order placed for ${quantity} at price ${price}`,
+    orderbook: ORDERBOOK[stockSymbol],
+  });
 }
 
 module.exports = {

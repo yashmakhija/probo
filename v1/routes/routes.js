@@ -12,6 +12,7 @@ const {
   showOrderbookBySymbol,
   placeBuyOrder,
   placeSellOrder,
+  mintTokens,
 } = require("../controller/userController");
 const routesRouter = express.Router();
 
