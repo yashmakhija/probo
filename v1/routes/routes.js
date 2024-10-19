@@ -13,7 +13,11 @@ const {
   placeBuyOrder,
   placeSellOrder,
   mintTokens,
+  cancelOrder,
 } = require("../controller/userController");
+
+const validwateMiddelware = require("../middleware/index");
+
 const routesRouter = express.Router();
 
 routesRouter.post("/reset", resetData);
@@ -26,7 +30,8 @@ routesRouter.post("/users", showAllUser);
 routesRouter.get("/orderbook/:stockSymbol", showOrderbookBySymbol);
 routesRouter.get("/balance/inr/:userId", userInrBalance);
 routesRouter.get("/balance/stock/:userId", userStockBalance);
-routesRouter.post("/order/buy", placeBuyOrder);
-routesRouter.post("/order/sell", placeSellOrder);
+routesRouter.post("/order/buy", validwateMiddelware, placeBuyOrder);
+routesRouter.post("/order/sell", validwateMiddelware, placeSellOrder);
+routesRouter.post("/order/cancel", cancelOrder);
 
 module.exports = routesRouter;
