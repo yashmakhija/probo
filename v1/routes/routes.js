@@ -33,5 +33,6 @@ routesRouter.get("/balance/stock/:userId", userStockBalance);
 routesRouter.post("/order/buy", validwateMiddelware, placeBuyOrder);
 routesRouter.post("/order/sell", validwateMiddelware, placeSellOrder);
 routesRouter.post("/order/cancel", cancelOrder);
+routesRouter.post("/trade/mint", mintTokens);
 
 module.exports = routesRouter;

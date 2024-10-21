@@ -1,0 +1,23 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const userController_1 = __importDefault(require("../controller/userController"));
+const validate_1 = __importDefault(require("../middleware/validate"));
+const routesRouter = express_1.default.Router();
+routesRouter.post("/reset", userController_1.default.resetData);
+routesRouter.post("/user/create/:userId", userController_1.default.createUser);
+routesRouter.post("/onramp/inr", userController_1.default.addBalance);
+routesRouter.post("/symbol/create/:stockSymbol", userController_1.default.newSymbol);
+routesRouter.get("/balances/stock", userController_1.default.stockBalance);
+routesRouter.get("/balances/inr", userController_1.default.inrBalance);
+routesRouter.post("/users", userController_1.default.showAllUser);
+routesRouter.get("/orderbook/:stockSymbol", userController_1.default.showOrderBookSymbol);
+routesRouter.get("/balance/inr/:userId", userController_1.default.userInrBalance);
+routesRouter.get("/balance/stock/:userId", userController_1.default.userStockBalance);
+routesRouter.post("/order/buy", validate_1.default, userController_1.default.placeBuyOrder);
+routesRouter.post("/order/sell", validate_1.default, userController_1.default.placeSellOrder);
+routesRouter.post("/trade/mint", userController_1.default.mintToken);
+exports.default = routesRouter;

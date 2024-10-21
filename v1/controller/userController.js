@@ -2,23 +2,6 @@ let INR_BALANCES = {};
 let STOCK_BALANCES = {};
 let ORDERBOOK = {};
 
-const WebSocket = require("ws");
-const wsServer = new WebSocket("ws://localhost:6969");
-
-// Broadcast order book updates
-function broadcastOrderBookUpdate(stockSymbol) {
-  const message = {
-    type: "orderBookUpdate",
-    stockSymbol: stockSymbol,
-    orderBook: ORDERBOOK[stockSymbol],
-  };
-
-  // Send message to all connected clients
-  if (wsServer.readyState === WebSocket.OPEN) {
-    wsServer.send(JSON.stringify(message));
-  }
-}
-
 function resetData(req, res) {
   // Reset all data
   INR_BALANCES = {};
@@ -157,7 +140,7 @@ function userInrBalance(req, res) {
   const { userId } = req.params;
   const userBalance = INR_BALANCES[userId];
   if (!userBalance) {
-    return res.status(404).json({
+    return res.json({
       message: `INR balance for user ${userId} not found.`,
     });
   }
@@ -276,8 +259,6 @@ function placeBuyOrder(req, res) {
     }
   }
 
-  broadcastOrderBookUpdate(stockSymbol);
-
   res.status(200).json({
     status: "success",
     message: `Order placed. ${
@@ -343,14 +324,9 @@ function placeSellOrder(req, res) {
 }
 
 function mintTokens(req, res) {
-  const { userId, stockSymbol, quantity, stockType } = req.body;
+  const { userId, stockSymbol, quantity } = req.body;
 
-  if (
-    !userId ||
-    !stockSymbol ||
-    !quantity ||
-    (stockType !== "yes" && stockType !== "no")
-  ) {
+  if (!userId || !stockSymbol || !quantity || quantity <= 0) {
     return res.status(400).json({ message: "Invalid input." });
   }
 
@@ -361,53 +337,12 @@ function mintTokens(req, res) {
   };
 
   // Mint the specified quantity
-  STOCK_BALANCES[userId][stockSymbol][stockType].quantity += quantity;
+  STOCK_BALANCES[userId][stockSymbol].yes.quantity += quantity;
+  STOCK_BALANCES[userId][stockSymbol].no.quantity += quantity;
 
   res.status(200).json({
-    message: `Minted ${quantity} ${stockType} tokens for ${stockSymbol}`,
+    message: `Minted ${quantity} tokens for both 'yes' and 'no' for ${stockSymbol}`,
     stockBalances: STOCK_BALANCES[userId][stockSymbol],
-  });
-}
-
-function cancelOrder(req, res) {
-  const { userId, stockSymbol, stockType, price } = req.body;
-
-  // Check if the order exists in the order book
-  if (
-    !ORDERBOOK[stockSymbol] ||
-    !ORDERBOOK[stockSymbol][stockType][price] ||
-    !ORDERBOOK[stockSymbol][stockType][price].orders[userId]
-  ) {
-    return res
-      .status(404)
-      .json({ status: "error", message: "Order not found." });
-  }
-
-  const quantity = ORDERBOOK[stockSymbol][stockType][price].orders[userId];
-
-  // Unlock balances based on the order type (buy or sell)
-  if (stockType === "yes" || stockType === "no") {
-    // For a buy order, unlock INR based on the remaining quantity
-    const remainingLockedINR = quantity * price;
-    INR_BALANCES[userId].locked -= remainingLockedINR;
-    INR_BALANCES[userId].balance += remainingLockedINR;
-  } else {
-    // For a sell order, unlock the locked stock quantity
-    STOCK_BALANCES[userId][stockSymbol][stockType].locked -= quantity;
-  }
-
-  // Remove the order from the order book
-  ORDERBOOK[stockSymbol][stockType][price].total -= quantity;
-  delete ORDERBOOK[stockSymbol][stockType][price].orders[userId];
-
-  // Clean up the order book if there are no more orders at this price level
-  if (ORDERBOOK[stockSymbol][stockType][price].total <= 0) {
-    delete ORDERBOOK[stockSymbol][stockType][price];
-  }
-
-  res.status(200).json({
-    status: "success",
-    message: "Order canceled and balances unlocked.",
   });
 }
 
@@ -425,5 +360,5 @@ module.exports = {
   placeBuyOrder,
   placeSellOrder,
   mintTokens,
-  cancelOrder,
+  // cancelOrder,
 };
