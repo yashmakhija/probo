@@ -1,22 +1,14 @@
 //v1.5
 import { createClient } from "redis";
 
+// Connect to Redis
 const client = createClient();
-
-const connectToRedis = async () => {
-  try {
-    await client.connect();
-    console.log("Connected to Redis 🔥..");
-  } catch (err) {
-    console.error("Error connecting to Redis:", err);
-  }
-};
-
-connectToRedis();
+client.connect().catch(console.error);
 client.on("error", (err) => {
   console.log("Redis Client Error: " + err);
 });
 
+// Data Interfaces
 interface Balance {
   balance: number;
   locked: number;
@@ -24,398 +16,307 @@ interface Balance {
 
 interface Stock {
   quantity: number;
-  locked?: number;
-}
-
-interface StockBalances {
-  [stockSymbol: string]: {
-    yes: Stock;
-    no: Stock;
-  };
+  locked: number;
 }
 
 interface Order {
   total: number;
-  orders: { [userID: string]: number };
+  orders: {
+    [userId: string]: { quantity: number; type: "minted" | "regular" };
+  };
 }
 
 interface OrderBook {
-  yes: { [price: string]: Order };
-  no: { [price: string]: Order };
+  yes: { [price: number]: Order };
+  no: { [price: number]: Order };
 }
 
-interface ServiceResponse {
-  status: number;
-  data: {
-    message: string;
-    [key: string]: any; // Allows for additional properties like 'orderbook', 'balance', etc.
-  };
-}
-
-let INR_BALANCES: { [userid: string]: Balance } = {};
-let STOCK_BALANCES: { [userId: string]: StockBalances } = {};
+// In-memory storage
+let INR_BALANCES: { [userId: string]: Balance } = {};
+let STOCK_BALANCES: {
+  [userId: string]: { [stockSymbol: string]: { yes: Stock; no: Stock } };
+} = {};
 let ORDERBOOK: { [stockSymbol: string]: OrderBook } = {};
 
-export const resetDataService = () => {
-  INR_BALANCES = {};
-  STOCK_BALANCES = {};
-  ORDERBOOK = {};
-
-  return { status: 200, data: { msg: "Reset Done!" } };
+// Utility to push data to Redis queue
+const pushToQueue = async (key: string, data: any) => {
+  try {
+    await client.lPush(key, JSON.stringify(data));
+    console.log(`Data pushed to Redis queue: ${key}`);
+  } catch (error) {
+    console.error("Error pushing data to Redis queue:", error);
+  }
 };
 
-export const createUserService = async (userId: string) => {
-  const existingUser = await client.hGet("INR_BALANCES", userId);
-  if (existingUser) {
-    return { status: 400, data: { msg: "User already exists" } };
+// Create a new user
+export const createUserService = (userId: string) => {
+  if (INR_BALANCES[userId]) {
+    return { status: 400, data: { message: "User already exists" } };
   }
 
-  const newUser = { balance: 0, locked: 0 };
-  await client.hSet("INR_BALANCES", userId, JSON.stringify(newUser));
+  INR_BALANCES[userId] = { balance: 0, locked: 0 };
+  pushToQueue("user_creation_queue", { userId, balance: INR_BALANCES[userId] });
 
-  return { status: 201, data: { msg: `User ${userId} created` } };
+  return { status: 201, data: { message: "User created" } };
 };
 
-async function addBalanceService(userId: string, amount: number) {
-  const userBalance = await client.hGet("INR_BALANCES", userId);
-  if (!userBalance) {
-    return { status: 404, data: { msg: "User not found" } };
-  }
-  const balanceData = JSON.parse(userBalance);
-  balanceData.balance += amount;
-
-  await client.hSet("INR_BALANCES", userId, JSON.stringify(balanceData));
-
-  return {
-    status: 200,
-    data: { msg: `Onramped ${userId} with amount ${amount}` },
-  };
-}
-
-function newSymbolService(stockSymbol: string, userId: string) {
-  if (!STOCK_BALANCES[userId]) {
-    STOCK_BALANCES[userId] = {};
+// Add balance to a user
+export const addBalanceService = (userId: string, amount: number) => {
+  const user = INR_BALANCES[userId];
+  if (!user) {
+    return { status: 404, data: { message: "User not found" } };
   }
 
-  if (STOCK_BALANCES[userId][stockSymbol]) {
-    return {
-      status: 404,
-      data: { msg: `${stockSymbol} is already exist for this ${userId}` },
-    };
+  user.balance += amount;
+  pushToQueue("balance_update_queue", { userId, balance: user });
+
+  return { status: 200, data: { message: `Added ${amount} to ${userId}` } };
+};
+
+// Create a new stock symbol
+export const createStockSymbolService = (stockSymbol: string) => {
+  if (ORDERBOOK[stockSymbol]) {
+    return { status: 400, data: { message: "Stock symbol already exists" } };
   }
 
-  STOCK_BALANCES[userId][stockSymbol] = {
-    yes: {
-      quantity: 0,
-      locked: 0,
-    },
-    no: {
-      quantity: 0,
-      locked: 0,
-    },
-  };
+  ORDERBOOK[stockSymbol] = { yes: {}, no: {} };
+  pushToQueue("stock_creation_queue", { stockSymbol });
 
-  if (!ORDERBOOK[stockSymbol]) {
-    ORDERBOOK[stockSymbol] = {
-      yes: {},
-      no: {},
-    };
-  }
+  return { status: 201, data: { message: "Stock symbol created" } };
+};
 
-  return {
-    status: 200,
-    data: {
-      msg: `Symbol ${stockSymbol} created for ${userId}`,
-      stockSymbol: STOCK_BALANCES[userId][stockSymbol],
-    },
-  };
-}
-
-function stockBalanceService() {
-  const balance = Object.keys(STOCK_BALANCES).map((userId) => ({
-    userId,
-    stockBalances: STOCK_BALANCES[userId] || {},
-  }));
-  return { status: 200, data: { balance } };
-}
-
-function inrBalanceService() {
-  const balance = Object.keys(INR_BALANCES).map((userId) => ({
-    userId,
-    inrBalances: INR_BALANCES[userId] || {},
-  }));
-
-  return { status: 200, data: { balance } };
-}
-
-function showAllUserService() {
-  const user = Object.keys(INR_BALANCES).map((userId) => ({
-    userId,
-    inrBalances: INR_BALANCES[userId] || {},
-    stockBalances: STOCK_BALANCES[userId] || {},
-  }));
-
-  return {
-    status: 200,
-    data: { user },
-  };
-}
-
-function showOrderBookSymbolService(stockSymbol: string) {
-  if (!stockSymbol) {
-    return {
-      status: 404,
-      data: { msg: `${stockSymbol} is not created yet!!` },
-    };
-  }
-
-  if (!ORDERBOOK[stockSymbol]) {
-    return {
-      status: 404,
-      data: { msg: `Stock ${stockSymbol} does not exist` },
-    };
-  }
-  return {
-    status: 200,
-    data: { symbol: stockSymbol, orderBook: ORDERBOOK[stockSymbol] },
-  };
-}
-
-function userInrBalanceService(userId: string) {
-  if (!INR_BALANCES[userId]) {
-    return {
-      status: 404,
-      data: { msg: `user doesn't exist` },
-    };
-  }
-  return {
-    status: 200,
-    data: { userId, balance: INR_BALANCES[userId] },
-  };
-}
-
-function userStockBalanceService(userId: string) {
-  const stockBalance = STOCK_BALANCES[userId];
-
-  if (!stockBalance) {
-    return {
-      status: 404,
-      data: { msg: `user doesnt have any stock balance` },
-    };
-  }
-  return {
-    status: 200,
-    data: { userId, stockBalance },
-  };
-}
-
-function mintTokenService(
+// Mint tokens for a user
+export const mintTokenService = (
   userId: string,
   stockSymbol: string,
   quantity: number
-) {
-  if (
-    !INR_BALANCES[userId] ||
-    !STOCK_BALANCES[userId] ||
-    !STOCK_BALANCES[userId][stockSymbol] ||
-    !quantity ||
-    quantity <= 0
-  ) {
-    return {
-      status: 404,
-      data: { msg: `Invalid inputs` },
-    };
+) => {
+  if (!INR_BALANCES[userId]) {
+    return { status: 404, data: { message: "User not found" } };
   }
 
   STOCK_BALANCES[userId] = STOCK_BALANCES[userId] || {};
   STOCK_BALANCES[userId][stockSymbol] = STOCK_BALANCES[userId][stockSymbol] || {
-    yes: {
-      quantity: 0,
-    },
-    no: {
-      quantity: 0,
-    },
+    yes: { quantity: 0, locked: 0 },
+    no: { quantity: 0, locked: 0 },
   };
+
   STOCK_BALANCES[userId][stockSymbol].yes.quantity += quantity;
   STOCK_BALANCES[userId][stockSymbol].no.quantity += quantity;
 
+  pushToQueue("mint_token_queue", { userId, stockSymbol, quantity });
+
   return {
     status: 200,
-    data: {
-      message: `Minted ${quantity} tokens for both 'yes' and 'no' for ${stockSymbol}`,
-      stockBalances: STOCK_BALANCES[userId][stockSymbol],
-    },
+    data: { message: `Minted ${quantity} tokens for ${stockSymbol}` },
   };
-}
+};
 
+// Helper function for stock swapping
+const swapStocks = (
+  userId: string,
+  stockSymbol: string,
+  sellerId: string,
+  price: number,
+  stockOption: "yes" | "no",
+  quantity: number
+) => {
+  STOCK_BALANCES[sellerId][stockSymbol][stockOption].locked -= quantity;
+  STOCK_BALANCES[userId][stockSymbol][stockOption].quantity += quantity;
+
+  INR_BALANCES[userId].balance -= quantity * price;
+  INR_BALANCES[sellerId].balance += quantity * price;
+};
+
+// Helper function for minting stocks
+const mintStocks = (
+  userId: string,
+  stockSymbol: string,
+  sellerId: string,
+  price: number,
+  stockOption: "yes" | "no",
+  quantity: number
+) => {
+  const oppositeOption = stockOption === "yes" ? "no" : "yes";
+  const correspondingPrice = 10 - price;
+
+  STOCK_BALANCES[sellerId][stockSymbol][oppositeOption].quantity += quantity;
+  STOCK_BALANCES[userId][stockSymbol][stockOption].quantity += quantity;
+  INR_BALANCES[userId].balance -= quantity * price;
+  INR_BALANCES[sellerId].locked -= quantity * correspondingPrice;
+};
+
+// Place a buy order
 export const placeBuyOrderService = async (
   userId: string,
   stockSymbol: string,
   quantity: number,
   price: number,
-  stockType: "yes" | "no"
+  stockOption: "yes" | "no"
 ) => {
-  const userBalance = await client.hGet("INR_BALANCES", userId);
-  if (!userBalance) {
-    return { status: 404, data: { msg: "User not found" } };
+  if (!INR_BALANCES[userId]) {
+    return { status: 404, data: { message: "User not found" } };
   }
 
-  const balanceData = JSON.parse(userBalance);
   const totalCost = quantity * price;
-  if (balanceData.balance < totalCost) {
-    return { status: 400, data: { msg: "Insufficient balance" } };
+  if (INR_BALANCES[userId].balance < totalCost) {
+    return { status: 400, data: { message: "Insufficient balance" } };
   }
 
-  balanceData.balance -= totalCost;
-  balanceData.locked += totalCost;
-  await client.hSet("INR_BALANCES", userId, JSON.stringify(balanceData));
-
-  const orderKey = `ORDERBOOK:${stockSymbol}:${stockType}:${price}`;
-  const order = {
-    userId,
-    quantity,
-    type: "regular",
-  };
+  INR_BALANCES[userId].balance -= totalCost;
+  INR_BALANCES[userId].locked += totalCost;
 
   if (!ORDERBOOK[stockSymbol]) {
     ORDERBOOK[stockSymbol] = { yes: {}, no: {} };
   }
 
   let remainingQuantity = quantity;
-  const oppositeType = stockType === "yes" ? "no" : "yes";
 
-  for (let existingPrice in ORDERBOOK[stockSymbol][stockType]) {
-    const existingPriceNumber: number = parseFloat(existingPrice);
+  // Match orders if possible
+  if (
+    ORDERBOOK[stockSymbol][stockOption][price] &&
+    ORDERBOOK[stockSymbol][stockOption][price].total >= remainingQuantity
+  ) {
+    ORDERBOOK[stockSymbol][stockOption][price].total -= remainingQuantity;
 
-    if (remainingQuantity <= 0) break;
+    for (const sellerId in ORDERBOOK[stockSymbol][stockOption][price].orders) {
+      const sellerOrder =
+        ORDERBOOK[stockSymbol][stockOption][price].orders[sellerId];
+      const availableQuantity = Math.min(
+        sellerOrder.quantity,
+        remainingQuantity
+      );
 
-    const existingOrders = ORDERBOOK[stockSymbol][stockType][existingPrice];
-    if (!existingOrders || !existingOrders.orders) {
-      continue;
-    }
-
-    for (let existingUserId in existingOrders.orders) {
-      if (remainingQuantity <= 0) break;
-      if (existingUserId === userId) continue; // Avoid matching with own orders
-
-      const availableQuantity = existingOrders.orders[existingUserId];
-      const quantityToMatch = Math.min(availableQuantity, remainingQuantity);
-      const matchCost = quantityToMatch * existingPriceNumber;
-
-      // Update the balances of the matched user
-      INR_BALANCES[existingUserId].locked -= matchCost;
-      INR_BALANCES[existingUserId].balance += matchCost;
-
-      // Ensure the stock balances are initialized
-      STOCK_BALANCES[userId] = STOCK_BALANCES[userId] || {};
-      STOCK_BALANCES[userId][stockSymbol] = STOCK_BALANCES[userId][
-        stockSymbol
-      ] || {
-        yes: { quantity: 0 },
-        no: { quantity: 0 },
-      };
-
-      // Update stock balances for both users
-      STOCK_BALANCES[existingUserId][stockSymbol][stockType].quantity -=
-        quantityToMatch;
-      STOCK_BALANCES[userId][stockSymbol][stockType].quantity +=
-        quantityToMatch;
-
-      // Update the order book
-      existingOrders.total -= quantityToMatch;
-      existingOrders.orders[existingUserId] -= quantityToMatch;
-      if (existingOrders.orders[existingUserId] <= 0) {
-        delete existingOrders.orders[existingUserId];
+      if (sellerOrder.type === "minted") {
+        mintStocks(
+          userId,
+          stockSymbol,
+          sellerId,
+          price,
+          stockOption,
+          availableQuantity
+        );
+      } else {
+        swapStocks(
+          userId,
+          stockSymbol,
+          sellerId,
+          price,
+          stockOption,
+          availableQuantity
+        );
       }
 
-      remainingQuantity -= quantityToMatch;
-    }
+      remainingQuantity -= availableQuantity;
+      ORDERBOOK[stockSymbol][stockOption][price].orders[sellerId].quantity -=
+        availableQuantity;
 
-    // Remove the price level from the order book if no more orders are left
-    if (existingOrders.total <= 0) {
-      delete ORDERBOOK[stockSymbol][stockType][existingPrice];
+      if (remainingQuantity === 0) {
+        break;
+      }
     }
   }
 
-  // Handle remaining quantity if there is any
+  // Add any remaining quantity to the order book
   if (remainingQuantity > 0) {
-    // You can choose to add the remaining order to the order book or handle it differently
-    return {
-      status: 200,
-      data: {
-        status: "partial",
-        msg: `Order partially matched, remaining quantity: ${remainingQuantity}`,
-      },
-    };
-  } else {
-    return {
-      status: 200,
-      data: { status: "success", msg: `Order fully matched.` },
+    if (!ORDERBOOK[stockSymbol][stockOption][price]) {
+      ORDERBOOK[stockSymbol][stockOption][price] = { total: 0, orders: {} };
+    }
+
+    ORDERBOOK[stockSymbol][stockOption][price].total += remainingQuantity;
+    ORDERBOOK[stockSymbol][stockOption][price].orders[userId] = {
+      quantity: remainingQuantity,
+      type: "minted",
     };
   }
+
+  pushToQueue("buy_order_queue", {
+    userId,
+    stockSymbol,
+    quantity,
+    price,
+    stockOption,
+  });
+
+  return { status: 200, data: { message: "Buy order placed" } };
 };
 
-function placeSellOrderService(
+// Place a sell order
+export const placeSellOrderService = (
   userId: string,
   stockSymbol: string,
   quantity: number,
   price: number,
-  stockType: string
-) {
-  if (stockType !== "yes" && stockType !== "no") {
-    return {
-      status: 404,
-      data: { message: "Invalid stock type. Must be 'yes' or 'no'" },
-    };
-    return;
+  stockOption: "yes" | "no"
+) => {
+  const stock = STOCK_BALANCES[userId]?.[stockSymbol]?.[stockOption];
+  if (!stock || stock.quantity < quantity) {
+    return { status: 400, data: { message: "Insufficient stock" } };
   }
 
-  if (quantity <= 0 || price <= 0) {
-    return {
-      status: 404,
-      data: { message: "Quantity and price must be positive numbers." },
-    };
-  }
+  stock.quantity -= quantity;
+  stock.locked += quantity;
 
-  if (
-    !STOCK_BALANCES[userId] ||
-    !STOCK_BALANCES[userId][stockSymbol] ||
-    STOCK_BALANCES[userId][stockSymbol][stockType].quantity < quantity
-  ) {
-    return {
-      status: 404,
-      data: { message: "Insufficient stock to sell." },
-    };
-  }
-
-  STOCK_BALANCES[userId][stockSymbol][stockType].locked =
-    (STOCK_BALANCES[userId][stockSymbol][stockType].locked || 0) + quantity;
-
-  // Initialize the order book if it does not exist
   if (!ORDERBOOK[stockSymbol]) {
     ORDERBOOK[stockSymbol] = { yes: {}, no: {} };
   }
 
-  // Initialize the price level in the order book
-  if (!ORDERBOOK[stockSymbol][stockType][price]) {
-    ORDERBOOK[stockSymbol][stockType][price] = { total: 0, orders: {} };
+  if (!ORDERBOOK[stockSymbol][stockOption][price]) {
+    ORDERBOOK[stockSymbol][stockOption][price] = { total: 0, orders: {} };
   }
 
-  // Add the sell order to the order book
-  ORDERBOOK[stockSymbol][stockType][price].total += quantity;
-  if (!ORDERBOOK[stockSymbol][stockType][price].orders[userId]) {
-    ORDERBOOK[stockSymbol][stockType][price].orders[userId] = 0;
-  }
-  ORDERBOOK[stockSymbol][stockType][price].orders[userId] += quantity;
-
-  return {
-    status: 200,
-    data: {
-      message: `Sell order placed for ${quantity} at price ${price}`,
-      orderbook: ORDERBOOK[stockSymbol],
-    },
+  ORDERBOOK[stockSymbol][stockOption][price].total += quantity;
+  ORDERBOOK[stockSymbol][stockOption][price].orders[userId] = {
+    quantity,
+    type: "regular",
   };
-}
+
+  pushToQueue("sell_order_queue", {
+    userId,
+    stockSymbol,
+    quantity,
+    price,
+    stockOption,
+  });
+
+  return { status: 200, data: { message: "Sell order placed" } };
+};
+
+// Get user INR balance
+export const getUserBalanceService = (userId: string) => {
+  const user = INR_BALANCES[userId];
+  if (!user) {
+    return { status: 404, data: { message: "User not found" } };
+  }
+  return { status: 200, data: { balance: user } };
+};
+
+// Get stock balances for a user
+export const getUserStockBalanceService = (userId: string) => {
+  const stockBalance = STOCK_BALANCES[userId];
+  if (!stockBalance) {
+    return { status: 404, data: { message: "User has no stock balance" } };
+  }
+  return { status: 200, data: { stockBalance } };
+};
+
+// Get order book for a stock symbol
+export const getOrderBookService = (stockSymbol: string) => {
+  const orderBook = ORDERBOOK[stockSymbol];
+  if (!orderBook) {
+    return { status: 404, data: { message: "Stock symbol not found" } };
+  }
+  return { status: 200, data: { orderBook } };
+};
+
+// Reset data for testing
+export const resetDataService = () => {
+  INR_BALANCES = {};
+  STOCK_BALANCES = {};
+  ORDERBOOK = {};
+
+  return { status: 200, data: { message: "Data reset" } };
+};
 
 //v1.5
 
@@ -423,14 +324,12 @@ const services = {
   resetDataService,
   createUserService,
   addBalanceService,
-  newSymbolService,
-  stockBalanceService,
-  inrBalanceService,
-  showAllUserService,
-  showOrderBookSymbolService,
-  userInrBalanceService,
-  userStockBalanceService,
+  createStockSymbolService,
   mintTokenService,
+  mintStocks,
+  getUserBalanceService,
+  getUserStockBalanceService,
+  getOrderBookService,
   placeBuyOrderService,
   placeSellOrderService,
 };
